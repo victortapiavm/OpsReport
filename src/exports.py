@@ -22,13 +22,14 @@ def build_excel_export(
     metrics: Mapping[str, Any] | pd.DataFrame | None = None,
     anomalies: pd.DataFrame | list[Mapping[str, Any]] | None = None,
     context: Mapping[str, Any] | None = None,
+    column_map: Mapping[str, str | None] | None = None,
 ) -> bytes:
     """Build a styled XLSX with raw data, context and analysis tables."""
     resolved_profile = dict(profile or profile_dataframe(dataframe))
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        _summary_table(dataframe, resolved_profile, metrics, anomalies).to_excel(
+        _summary_table(dataframe, resolved_profile, metrics, anomalies, column_map).to_excel(
             writer, sheet_name="Resumen", index=False
         )
         dataframe.to_excel(writer, sheet_name="Datos", index=False)
@@ -62,8 +63,15 @@ def _summary_table(
     profile: Mapping[str, Any],
     metrics: Mapping[str, Any] | pd.DataFrame | None,
     anomalies: pd.DataFrame | list[Mapping[str, Any]] | None,
+    column_map: Mapping[str, str | None] | None,
 ) -> pd.DataFrame:
-    narrative = generate_management_narrative(dataframe, profile=profile, metrics=metrics, anomalies=anomalies)
+    narrative = generate_management_narrative(
+        dataframe,
+        profile=profile,
+        metrics=metrics,
+        anomalies=anomalies,
+        column_map=column_map,
+    )
     rows: list[dict[str, Any]] = [
         {"sección": "Cobertura", "detalle": f"{profile.get('rows', len(dataframe))} registros × {profile.get('columns', len(dataframe.columns))} columnas"},
         {"sección": "Duplicados", "detalle": int(profile.get("duplicate_rows", 0))},

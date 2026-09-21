@@ -14,6 +14,16 @@ from src.ingestion import load_data
 from src.metrics import calculate_kpis
 from src.narrative import generate_management_narrative
 from src.profiling import profile_dataframe
+from src.schema import (
+    FIELD_LABELS,
+    SEMANTIC_FIELDS,
+    ColumnInference,
+    cancelled_status_mask,
+    infer_schema,
+    resolve_column,
+    suggested_mapping,
+    validate_column_mapping,
+)
 from src.validation import assess_data_quality
 
 
@@ -190,17 +200,11 @@ def _get(mapping: dict[str, Any], *keys: str, default: Any = None) -> Any:
     return default
 
 
-def _find_column(df: pd.DataFrame, *candidates: str) -> str | None:
-    normalized = {str(column).strip().lower(): str(column) for column in df.columns}
-    for candidate in candidates:
-        match = normalized.get(candidate.lower())
-        if match is not None:
-            return match
-    return None
-
-
-def _date_range(df: pd.DataFrame) -> tuple[str, str] | None:
-    date_column = _find_column(df, "date", "fecha", "order_date", "fecha_pedido")
+def _date_range(
+    df: pd.DataFrame,
+    column_map: dict[str, str | None] | None = None,
+) -> tuple[str, str] | None:
+    date_column = resolve_column(df, "date", column_map)
     if not date_column:
         return None
     parsed = pd.to_datetime(df[date_column], errors="coerce")
@@ -210,21 +214,18 @@ def _date_range(df: pd.DataFrame) -> tuple[str, str] | None:
     return parsed.min().strftime("%d-%m-%Y"), parsed.max().strftime("%d-%m-%Y")
 
 
-def _charts(df: pd.DataFrame) -> list[tuple[str, Any]]:
+def _charts(
+    df: pd.DataFrame,
+    column_map: dict[str, str | None] | None = None,
+) -> list[tuple[str, Any]]:
     charts: list[tuple[str, Any]] = []
-    date_col = _find_column(df, "date", "fecha")
-    revenue_col = _find_column(df, "revenue", "revenue_clp", "ingresos", "ventas")
-    order_col = _find_column(df, "order_id", "pedido_id", "id_pedido")
-    region_col = _find_column(df, "region", "región")
-    status_col = _find_column(df, "status", "estado")
-    category_col = _find_column(df, "category", "categoria", "categoría")
-    processing_col = _find_column(
-        df,
-        "processing_hours",
-        "processing_time_hours",
-        "horas_procesamiento",
-        "processing_time",
-    )
+    date_col = resolve_column(df, "date", column_map)
+    revenue_col = resolve_column(df, "revenue", column_map)
+    order_col = resolve_column(df, "order_id", column_map)
+    region_col = resolve_column(df, "region", column_map)
+    status_col = resolve_column(df, "status", column_map)
+    category_col = resolve_column(df, "category", column_map)
+    processing_col = resolve_column(df, "processing_time_hours", column_map)
 
     if date_col and revenue_col:
         tmp = df[[date_col, revenue_col]].copy()
@@ -312,13 +313,7 @@ def _charts(df: pd.DataFrame) -> list[tuple[str, Any]]:
 
     if region_col and status_col:
         tmp = df[[region_col, status_col]].copy()
-        tmp["_cancelled"] = (
-            tmp[status_col]
-            .astype("string")
-            .str.strip()
-            .str.lower()
-            .isin({"cancelled", "canceled", "cancelado", "cancelada"})
-        )
+        tmp["_cancelled"] = cancelled_status_mask(tmp[status_col])
         grouped = tmp.groupby(region_col, dropna=False)["_cancelled"].mean().mul(100).reset_index()
         grouped[region_col] = grouped[region_col].fillna("Sin región").astype(str)
         fig = px.bar(
@@ -338,6 +333,104 @@ def _charts(df: pd.DataFrame) -> list[tuple[str, Any]]:
             margin=dict(l=12, r=12, t=18, b=12),
         )
     return charts
+
+
+def _render_schema_mapping(
+    df: pd.DataFrame,
+    filename: str | None,
+) -> tuple[dict[str, str | None], dict[str, ColumnInference]]:
+    """Render explainable schema proposals and return the active column mapping."""
+
+    inferences = infer_schema(df)
+    automatic = suggested_mapping(inferences)
+    signature = f"{filename or 'dataset'}|{'|'.join(str(column) for column in df.columns)}"
+    mapping_store = st.session_state.setdefault("schema_mappings", {})
+    saved = mapping_store.get(signature)
+    active = (
+        dict(saved)
+        if isinstance(saved, dict)
+        else {field: automatic.get(field) for field in SEMANTIC_FIELDS}
+    )
+
+    high_count = sum(inference.confidence == "high" for inference in inferences.values())
+    needs_review = any(inference.confidence != "high" for inference in inferences.values())
+    title = f"Mapeo de columnas · {high_count}/{len(SEMANTIC_FIELDS)} roles detectados automáticamente"
+
+    with st.expander(title, expanded=needs_review and saved is None):
+        st.caption(
+            "OpsReport reconoce encabezados con reglas transparentes. Los mapeos de confianza alta "
+            "se aplican automáticamente; las sugerencias dudosas requieren confirmación. Puedes dejar "
+            "cualquier rol sin mapear y el análisis continuará con lo disponible."
+        )
+
+        confidence_labels = {
+            "high": "Alta · automática",
+            "medium": "Media · revisar",
+            "low": "Baja · revisar",
+            "none": "Sin coincidencia",
+        }
+        inference_rows = [
+            {
+                "Rol": FIELD_LABELS[field],
+                "Sugerencia": inference.column or "—",
+                "Confianza": confidence_labels[inference.confidence],
+                "Evidencia": inference.reason,
+            }
+            for field, inference in inferences.items()
+        ]
+        st.dataframe(pd.DataFrame(inference_rows), width="stretch", hide_index=True)
+
+        if saved is None and needs_review:
+            st.info(
+                "Las sugerencias de confianza media o baja no afectan los cálculos hasta que confirmes "
+                "el mapeo."
+            )
+
+        form_key = f"schema_mapping_form::{signature}"
+        with st.form(form_key):
+            st.markdown("**Revisar o corregir mapeo**")
+            proposed: dict[str, str | None] = {}
+            form_columns = st.columns(3)
+            source_columns = [str(column) for column in df.columns]
+            options = ["— No mapear —", *source_columns]
+            for index, field in enumerate(SEMANTIC_FIELDS):
+                inference = inferences[field]
+                if saved is not None:
+                    default_column = saved.get(field)
+                elif inference.confidence in {"high", "medium"} and inference.column:
+                    default_column = inference.column
+                else:
+                    default_column = None
+                default_value = default_column if default_column in source_columns else "— No mapear —"
+                option_index = options.index(default_value) if default_value in options else 0
+                with form_columns[index % 3]:
+                    selection = st.selectbox(
+                        FIELD_LABELS[field],
+                        options,
+                        index=option_index,
+                        help=(
+                            f"Confianza: {confidence_labels[inference.confidence]}. "
+                            f"{inference.reason}"
+                        ),
+                    )
+                proposed[field] = None if selection == "— No mapear —" else selection
+
+            submitted = st.form_submit_button("Aplicar mapeo", type="primary")
+
+        if submitted:
+            errors = validate_column_mapping(df, proposed)
+            if errors:
+                for error in errors:
+                    st.error(error)
+            else:
+                mapping_store[signature] = dict(proposed)
+                active = dict(proposed)
+                st.success("Mapeo aplicado a este archivo.")
+
+        mapped_count = sum(bool(column) for column in active.values())
+        st.caption(f"Mapeo activo: {mapped_count} de {len(SEMANTIC_FIELDS)} roles semánticos.")
+
+    return active, inferences
 
 
 def _render_quality(quality: dict[str, Any], profile: dict[str, Any]) -> None:
@@ -391,6 +484,9 @@ def _render_quality(quality: dict[str, Any], profile: dict[str, Any]) -> None:
         invalid_numeric = int(stats.get("invalid_numeric_values", 0) or 0)
         if invalid_numeric:
             summary_bits.append(f"{invalid_numeric} valores numéricos no interpretables")
+        invalid_dates = int(stats.get("invalid_date_values", 0) or 0)
+        if invalid_dates:
+            summary_bits.append(f"{invalid_dates} fechas no interpretables")
         if summary_bits:
             st.warning(" · ".join(summary_bits))
         with st.expander("Ver detalle de advertencias", expanded=False):
@@ -403,7 +499,8 @@ def _render_quality(quality: dict[str, Any], profile: dict[str, Any]) -> None:
     inconsistencies = [
         issue.get("message")
         for issue in structured_issues
-        if isinstance(issue, dict) and issue.get("code") == "invalid_numeric_values"
+        if isinstance(issue, dict)
+        and issue.get("code") in {"invalid_numeric_values", "invalid_date_values"}
     ]
     if type_data:
         type_df = pd.DataFrame(type_data)
@@ -563,16 +660,24 @@ def main() -> None:
         st.error("El archivo no contiene filas para analizar.")
         return
 
+    st.markdown(
+        f'<div class="ops-file">▦ Analizando: <strong>{escape(filename or "")}</strong></div>',
+        unsafe_allow_html=True,
+    )
+    column_map, _ = _render_schema_mapping(df, filename)
+    st.divider()
+
     try:
         profile = profile_dataframe(df)
-        quality = assess_data_quality(df)
-        kpis = calculate_kpis(df)
-        findings = detect_anomalies(df)
+        quality = assess_data_quality(df, column_map=column_map)
+        kpis = calculate_kpis(df, column_map=column_map)
+        findings = detect_anomalies(df, column_map=column_map)
         summary = generate_management_narrative(
             df,
             profile=profile,
             metrics=kpis,
             anomalies=findings,
+            column_map=column_map,
         )
     except Exception as exc:
         st.error("El archivo se pudo leer, pero ocurrió un problema durante el análisis.")
@@ -580,15 +685,9 @@ def main() -> None:
             st.code(str(exc))
         return
 
-    st.markdown(
-        f'<div class="ops-file">▦ Analizando: <strong>{escape(filename or "")}</strong></div>',
-        unsafe_allow_html=True,
-    )
-    st.divider()
-
     st.header("1. Vista general")
     st.caption("Cobertura del archivo y una muestra rápida de los registros recibidos.")
-    date_range = _date_range(df)
+    date_range = _date_range(df, column_map)
     overview = st.columns(3)
     overview[0].metric("Filas", _format_number(len(df)))
     overview[1].metric("Columnas", _format_number(len(df.columns)))
@@ -619,7 +718,7 @@ def main() -> None:
 
     st.header("4. Visualizaciones")
     st.caption("Vistas interactivas construidas directamente desde el archivo analizado.")
-    charts = _charts(df)
+    charts = _charts(df, column_map)
     if not charts:
         st.info(
             "No encontramos suficientes columnas compatibles para construir visualizaciones "
@@ -667,7 +766,15 @@ def main() -> None:
             profile=profile,
             metrics=kpis,
             anomalies=findings,
-            context={"source_file": filename},
+            context={
+                "source_file": filename,
+                "column_mapping": {
+                    FIELD_LABELS[field]: column
+                    for field, column in column_map.items()
+                    if column
+                },
+            },
+            column_map=column_map,
         )
         st.download_button(
             "Descargar informe Excel",

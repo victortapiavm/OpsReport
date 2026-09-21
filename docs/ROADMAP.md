@@ -57,7 +57,7 @@ This validation baseline should be preserved in later phases.
 
 ## Phase 2 — Portfolio Polish and Deployment
 
-**Status: IN PROGRESS — local polish and validation complete; publication pending**
+**Status: IN PROGRESS — GitHub publication and CI complete; public Streamlit deployment pending**
 
 ### Objective
 
@@ -97,7 +97,7 @@ Do not add major analytical features merely to make the project look larger. Thi
 
 ## Phase 3 — Arbitrary Spreadsheet Support
 
-**Status: PLANNED**
+**Status: COMPLETE**
 
 ### Objective
 
@@ -118,6 +118,26 @@ Make OpsReport useful for operational spreadsheets that do not already use the b
 ### Definition of Done
 
 Phase 3 is complete when a spreadsheet with substantially different column names can be mapped through the UI and analyzed without editing source code.
+
+### Delivered
+
+- Added `src/schema.py` as the shared semantic authority for order ID, date, revenue, cost, units, status, region, category, and processing time.
+- Added explainable Spanish/English header recognition with confidence, alternatives, and ambiguity handling.
+- High-confidence mappings apply automatically; uncertain suggestions require confirmation.
+- Added an interactive Streamlit mapping form with manual overrides, explicit unmapping, duplicate-source validation, and partial mappings.
+- Threaded the resolved mapping through quality checks, KPIs, date range, charts, anomaly detection, executive narrative, and Excel export.
+- Added mapped numeric and date inconsistency diagnostics without changing the documented quality-score weights.
+- Unified cancellation interpretation across KPI, visualization, and narrative calculations.
+- Preserved raw source headers in preview and export while carrying the semantic mapping as analysis context.
+- Added deterministic tests for English headers, Spanish headers, ambiguity, missing roles, overrides, explicit unmapping, normalized-name collisions, type diagnostics, and full mapped analysis/export.
+- Added a Streamlit AppTest proving a CSV with arbitrary headers can be uploaded, mapped through the UI, analyzed, and exported without source-code changes.
+
+### Validation at completion
+
+- 31 pytest tests passed in the project virtual environment.
+- The arbitrary-schema Streamlit AppTest completed without UI exceptions.
+- The bundled sample still auto-maps all 9 supported semantic roles and renders the existing dashboard flow.
+- Python compile checks passed during implementation.
 
 ### Scope guardrail
 
@@ -266,6 +286,6 @@ Any later feature should earn its complexity by improving the core spreadsheet-t
 
 ## Current Next Step
 
-Proceed with **Phase 2 — Portfolio Polish and Deployment** before expanding the analytical feature set.
+Finish the remaining **Phase 2 — Portfolio Polish and Deployment** item: complete Streamlit Community Cloud authorization/deployment, verify the bundled sample and Excel export on the public instance, then add the live-demo URL to GitHub and this README.
 
-The MVP already demonstrates Python, data analysis, testing, modular design, error handling, visualization, and export capability. Making that work easy to inspect and run publicly has higher immediate portfolio value than simply increasing the feature count.
+After that, **Phase 4 — Reporting and Analytical Depth** is the next product-development phase unless implementation evidence suggests a better intermediate step.

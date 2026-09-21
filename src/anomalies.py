@@ -7,7 +7,7 @@ from typing import Any
 
 import pandas as pd
 
-from .metrics import resolve_column
+from .schema import resolve_column
 
 
 DEFAULT_ANOMALY_COLUMNS = ("revenue", "quantity", "cost", "processing_time_hours")
@@ -56,7 +56,7 @@ def _outlier_mask(values: pd.Series) -> tuple[pd.Series, str]:
 def detect_anomalies(
     df: pd.DataFrame,
     columns: Iterable[str] | None = None,
-    column_map: Mapping[str, str] | None = None,
+    column_map: Mapping[str, str | None] | None = None,
     min_samples: int = 4,
 ) -> list[dict[str, Any]]:
     """Detect numeric outliers and return understandable Spanish findings.

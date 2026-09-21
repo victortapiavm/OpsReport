@@ -14,9 +14,9 @@ The analytical layer is deliberately deterministic and independently testable. A
 
 | Area | Evidence in the project |
 | --- | --- |
-| Python engineering | Modular ingestion, validation, profiling, metrics, anomaly, narrative, and export layers |
+| Python engineering | Modular ingestion, schema recognition, validation, profiling, metrics, anomaly, narrative, and export layers |
 | Data analysis | pandas-based quality diagnostics, operational KPIs, segmentation, and robust outlier rules |
-| Product development | Intentional Spanish UI, graceful incomplete-schema behavior, sample workflow, and export |
+| Product development | Intentional Spanish UI, explainable column mapping, graceful incomplete-schema behavior, sample workflow, and export |
 | Testing | Deterministic unit and end-to-end coverage on Python 3.12 |
 | Reproducibility | Fixed synthetic-data seed, pinned runtime dependencies, and GitHub Actions CI |
 
@@ -39,12 +39,13 @@ En operaciones es habitual recibir planillas con filas duplicadas, valores falta
 OpsReport reduce ese trabajo inicial a un flujo simple:
 
 1. cargar un archivo CSV o XLSX, o usar la muestra incluida;
-2. revisar la calidad de los datos;
-3. calcular KPIs operativos;
-4. explorar visualizaciones interactivas;
-5. revisar anomalías determinísticas;
-6. obtener un resumen ejecutivo trazable;
-7. exportar los resultados a Excel.
+2. revisar o corregir el mapeo semántico de columnas cuando haga falta;
+3. revisar la calidad de los datos;
+4. calcular KPIs operativos;
+5. explorar visualizaciones interactivas;
+6. revisar anomalías determinísticas;
+7. obtener un resumen ejecutivo trazable;
+8. exportar los resultados a Excel.
 
 La frase que guía el producto es:
 
@@ -54,6 +55,9 @@ La frase que guía el producto es:
 
 - Carga de archivos `.csv` y `.xlsx`.
 - Dataset sintético reproducible incluido en el repositorio.
+- Reconocimiento semántico explicable de columnas comunes en español e inglés.
+- Mapeo interactivo para planillas con nombres de columnas distintos o ambiguos.
+- Mapeos parciales: los indicadores sin campos suficientes quedan explícitamente no disponibles.
 - Vista general con tamaño del dataset, período detectado y vista previa.
 - Diagnóstico de valores faltantes y filas duplicadas.
 - Inferencia práctica de tipos de columnas y detección de inconsistencias donde aplica.
@@ -91,7 +95,8 @@ La muestra incluye deliberadamente valores faltantes, duplicados, cancelaciones,
 ```mermaid
 flowchart LR
     A[CSV / XLSX] --> B[Ingestion]
-    B --> C[Validation & Profiling]
+    B --> S[Schema Recognition & Mapping]
+    S --> C[Validation & Profiling]
     C --> D[KPIs]
     C --> E[Anomaly Detection]
     D --> F[Deterministic Narrative]
@@ -107,6 +112,7 @@ OpsReport/
 ├── app.py
 ├── src/
 │   ├── ingestion.py
+│   ├── schema.py
 │   ├── validation.py
 │   ├── profiling.py
 │   ├── metrics.py
@@ -118,6 +124,8 @@ OpsReport/
 │   └── sample_operations.csv
 ├── tests/
 │   ├── test_ingestion.py
+│   ├── test_schema.py
+│   ├── test_app.py
 │   ├── test_validation.py
 │   ├── test_metrics.py
 │   ├── test_anomalies.py
@@ -132,6 +140,7 @@ OpsReport/
 La separación es intencional:
 
 - `ingestion.py`: lectura y errores de archivos;
+- `schema.py`: reconocimiento explicable y resolución de roles semánticos;
 - `validation.py`: calidad de datos y advertencias;
 - `profiling.py`: resumen estructural e inferencia de tipos;
 - `metrics.py`: KPIs;
@@ -157,7 +166,7 @@ La fórmula es determinística y suma cuatro componentes:
 
 Un dataset vacío obtiene 0. Cada componente queda acotado por su peso y el resultado final se limita al rango 0–100. Las reglas viven en `src/validation.py`.
 
-El dashboard muestra además los componentes observables —faltantes globales, duplicados e inconsistencias numéricas— para evitar que el indicador se interprete de manera aislada.
+El dashboard muestra además los componentes observables —faltantes globales, duplicados e inconsistencias numéricas o de fecha— para evitar que el indicador se interprete de manera aislada. Las advertencias de fecha son diagnósticas y no alteran los pesos documentados del indicador.
 
 ## KPIs
 
@@ -229,7 +238,7 @@ python -m pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Las pruebas cubren comportamiento determinístico de ingestión, validación, métricas y anomalías, incluyendo errores de entrada, divisiones por cero y columnas faltantes.
+Las pruebas cubren comportamiento determinístico de ingestión, reconocimiento y mapeo de esquema, validación, métricas, anomalías, exportación y el recorrido Streamlit de una planilla arbitraria. Incluyen errores de entrada, ambigüedad de encabezados, overrides del usuario, divisiones por cero y columnas faltantes.
 
 ## Decisiones de ingeniería
 
@@ -247,11 +256,12 @@ Los KPIs, diagnósticos y anomalías usan funciones reproducibles. Esto permite 
 
 ### Degradación controlada
 
-Un archivo arbitrario puede no tener `revenue`, `cost`, `status` u otras columnas del esquema de ejemplo. Los módulos devuelven resultados parciales y advertencias en esos casos.
+Un archivo arbitrario puede no usar `revenue`, `cost`, `status` u otros nombres del esquema de ejemplo. OpsReport propone roles semánticos por reglas de encabezado explicables y permite corregirlos en la interfaz. Si un rol queda sin mapear, los módulos devuelven resultados parciales y métricas no disponibles sin fallar.
 
 ## Limitaciones actuales
 
-- No existe mapeo interactivo de columnas para esquemas completamente distintos.
+- El reconocimiento semántico usa aliases y heurísticas de tipo transparentes; encabezados muy específicos del negocio pueden requerir mapeo manual.
+- Los mapeos confirmados viven en la sesión actual y no se guardan como presets reutilizables.
 - La inferencia de tipos es heurística.
 - Las anomalías son reglas estadísticas simples y no modelan estacionalidad compleja.
 - El export principal es Excel.
@@ -265,8 +275,8 @@ El roadmap detallado se mantiene en [`docs/ROADMAP.md`](docs/ROADMAP.md).
 Estado actual:
 
 - **Phase 1 — Strong MVP:** completada.
-- **Phase 2 — Portfolio Polish and Deployment:** en progreso; polish y validación local completados, publicación pendiente.
-- **Phase 3 — Arbitrary Spreadsheet Support:** planificada.
+- **Phase 2 — Portfolio Polish and Deployment:** en progreso; repositorio público, screenshots y CI Python 3.12 completados; demo pública pendiente.
+- **Phase 3 — Arbitrary Spreadsheet Support:** completada.
 - **Phase 4 — Reporting and Analytical Depth:** planificada.
 - **Phase 5 — Optional AI Interpretation Layer:** planificada y opcional.
 

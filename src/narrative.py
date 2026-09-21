@@ -8,6 +8,7 @@ from typing import Any, Mapping, Protocol
 import pandas as pd
 
 from src.profiling import detect_date_columns, profile_dataframe
+from src.schema import cancelled_status_mask, resolve_column
 
 
 class NarrativeEnhancer(Protocol):
@@ -37,6 +38,7 @@ def generate_management_narrative(
     metrics: Mapping[str, Any] | pd.DataFrame | None = None,
     anomalies: pd.DataFrame | list[Any] | tuple[Any, ...] | None = None,
     enhancer: NarrativeEnhancer | None = None,
+    column_map: Mapping[str, str | None] | None = None,
 ) -> str:
     """Create a concise, repeatable Spanish executive narrative.
 
@@ -45,7 +47,7 @@ def generate_management_narrative(
     introduced later without changing analysis or export contracts.
     """
     resolved_profile = dict(profile or profile_dataframe(dataframe))
-    signals = _extract_signals(dataframe, resolved_profile, metrics, anomalies)
+    signals = _extract_signals(dataframe, resolved_profile, metrics, anomalies, column_map)
     paragraphs = _render(signals)
     base_text = "\n\n".join(paragraphs)
 
@@ -63,22 +65,31 @@ def _extract_signals(
     profile: Mapping[str, Any],
     metrics: Mapping[str, Any] | pd.DataFrame | None,
     anomalies: pd.DataFrame | list[Any] | tuple[Any, ...] | None,
+    column_map: Mapping[str, str | None] | None,
 ) -> NarrativeSignals:
-    status_col = _find_column(dataframe, ("status", "estado"))
-    processing_col = _find_column(
-        dataframe,
-        ("processing_hours", "processing_time_hours", "processing_time", "tiempo_proceso_horas", "tiempo_proceso", "lead_time_hours"),
+    status_col = resolve_column(dataframe, "status", column_map)
+    processing_col = resolve_column(dataframe, "processing_time_hours", column_map)
+    revenue_col = resolve_column(dataframe, "revenue", column_map)
+    segment_col = resolve_column(dataframe, "region", column_map) or resolve_column(
+        dataframe, "category", column_map
     )
-    revenue_col = _find_column(dataframe, ("revenue_clp", "revenue", "ingresos_clp", "ingresos", "sales", "ventas"))
-    segment_col = _find_column(dataframe, ("region", "región", "category", "categoria", "categoría"))
 
     cancellation_rate = _metric_value(metrics, ("cancellation_rate", "cancel_rate", "tasa_cancelacion"))
     if cancellation_rate is None and status_col:
         status = dataframe[status_col].astype("string").str.lower().str.strip()
-        cancelled = status.str.contains(r"cancel|anulad", regex=True, na=False)
+        cancelled = cancelled_status_mask(status)
         cancellation_rate = float(cancelled.mean() * 100)
 
-    average_processing = _metric_value(metrics, ("average_processing_hours", "avg_processing_time", "processing_mean"))
+    average_processing = _metric_value(
+        metrics,
+        (
+            "average_processing_time_hours",
+            "average_processing_time",
+            "average_processing_hours",
+            "avg_processing_time",
+            "processing_mean",
+        ),
+    )
     p95_processing = _metric_value(metrics, ("p95_processing_hours", "processing_p95"))
     if processing_col:
         numeric = pd.to_numeric(dataframe[processing_col], errors="coerce")
@@ -87,14 +98,17 @@ def _extract_signals(
         if p95_processing is None and numeric.notna().any():
             p95_processing = float(numeric.quantile(0.95))
 
-    total_revenue = _metric_value(metrics, ("total_revenue", "revenue_total", "ingresos_totales"))
+    total_revenue = _metric_value(
+        metrics,
+        ("revenue", "total_revenue", "revenue_total", "ingresos_totales"),
+    )
     if total_revenue is None and revenue_col:
         revenue = pd.to_numeric(dataframe[revenue_col], errors="coerce")
         if revenue.notna().any():
             total_revenue = float(revenue.sum())
 
     poorest_segment = _poorest_segment(dataframe, segment_col, processing_col, status_col)
-    period = _period_text(dataframe)
+    period = _period_text(dataframe, column_map)
     anomaly_count = _anomaly_count(anomalies)
 
     return NarrativeSignals(
@@ -151,15 +165,6 @@ def _render(signals: NarrativeSignals) -> list[str]:
     return [scope, performance, quality, priority_text]
 
 
-def _find_column(dataframe: pd.DataFrame, candidates: tuple[str, ...]) -> str | None:
-    normalized = {_normalize_name(column): str(column) for column in dataframe.columns}
-    for candidate in candidates:
-        match = normalized.get(_normalize_name(candidate))
-        if match is not None:
-            return match
-    return None
-
-
 def _normalize_name(value: Any) -> str:
     translation = str.maketrans("áéíóúüñ", "aeiouun")
     return str(value).strip().lower().translate(translation).replace(" ", "_")
@@ -179,11 +184,20 @@ def _metric_value(metrics: Mapping[str, Any] | pd.DataFrame | None, keys: tuple[
     return None
 
 
-def _period_text(dataframe: pd.DataFrame) -> str | None:
-    date_columns = detect_date_columns(dataframe)
-    if not date_columns:
+def _period_text(
+    dataframe: pd.DataFrame,
+    column_map: Mapping[str, str | None] | None = None,
+) -> str | None:
+    mapped_date = resolve_column(dataframe, "date", column_map)
+    if mapped_date is not None:
+        parsed = pd.to_datetime(dataframe[mapped_date], errors="coerce").dropna()
+    elif column_map is None:
+        date_columns = detect_date_columns(dataframe)
+        if not date_columns:
+            return None
+        parsed = pd.to_datetime(dataframe[date_columns[0]], errors="coerce").dropna()
+    else:
         return None
-    parsed = pd.to_datetime(dataframe[date_columns[0]], errors="coerce").dropna()
     if parsed.empty:
         return None
     return f"{parsed.min():%d-%m-%Y} a {parsed.max():%d-%m-%Y}"
@@ -213,7 +227,7 @@ def _poorest_segment(
                 return f"{segment_col} = {worst}"
 
     if status_col:
-        cancelled = valid[status_col].astype("string").str.lower().str.contains(r"cancel|anulad", regex=True, na=False)
+        cancelled = cancelled_status_mask(valid[status_col])
         rates = cancelled.groupby(valid[segment_col]).mean()
         if len(rates) >= 2 and float(rates.max()) >= max(float(cancelled.mean()) * 1.25, 0.08):
             return f"{segment_col} = {rates.idxmax()}"

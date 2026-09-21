@@ -19,11 +19,12 @@ from typing import Any
 
 import pandas as pd
 
-from .metrics import resolve_column
+from .schema import resolve_column
 
 
 DEFAULT_REQUIRED_COLUMNS = ("order_id", "revenue")
-DEFAULT_NUMERIC_COLUMNS = ("revenue", "quantity", "cost")
+DEFAULT_NUMERIC_COLUMNS = ("revenue", "quantity", "cost", "processing_time_hours")
+DEFAULT_DATE_COLUMNS = ("date",)
 QUALITY_SCORE_WEIGHTS = {
     "required_columns": 40.0,
     "completeness": 25.0,
@@ -45,7 +46,8 @@ def assess_data_quality(
     df: pd.DataFrame,
     required_columns: Iterable[str] = DEFAULT_REQUIRED_COLUMNS,
     numeric_columns: Iterable[str] = DEFAULT_NUMERIC_COLUMNS,
-    column_map: Mapping[str, str] | None = None,
+    date_columns: Iterable[str] = DEFAULT_DATE_COLUMNS,
+    column_map: Mapping[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """Assess a dataframe and return a deterministic 0-100 quality report.
 
@@ -56,6 +58,7 @@ def assess_data_quality(
 
     required = tuple(dict.fromkeys(required_columns))
     numeric = tuple(dict.fromkeys(numeric_columns))
+    dates = tuple(dict.fromkeys(date_columns))
     issues: list[dict[str, Any]] = []
 
     if df.empty:
@@ -82,6 +85,7 @@ def assess_data_quality(
                 "duplicate_rows": 0,
                 "missing_required_columns": list(required),
                 "invalid_numeric_values": 0,
+                "invalid_date_values": 0,
             },
         }
 
@@ -166,6 +170,32 @@ def assess_data_quality(
     )
     numeric_score = QUALITY_SCORE_WEIGHTS["numeric_validity"] * numeric_validity_ratio
 
+    invalid_date_values = 0
+    resolved_dates: set[str] = set()
+    for canonical in dates:
+        actual = resolve_column(df, canonical, column_map)
+        if actual is None or actual in resolved_dates:
+            continue
+        resolved_dates.add(actual)
+        blank_mask = _is_blank(df[actual])
+        nonblank = df.loc[~blank_mask, actual]
+        parsed = pd.to_datetime(nonblank, errors="coerce")
+        invalid_count = int(parsed.isna().sum())
+        invalid_date_values += invalid_count
+        if invalid_count:
+            issues.append(
+                {
+                    "code": "invalid_date_values",
+                    "severity": "warning",
+                    "column": canonical,
+                    "count": invalid_count,
+                    "message": (
+                        f"La columna «{canonical}» tiene {invalid_count} valor(es) "
+                        "que no se pueden interpretar como fecha."
+                    ),
+                }
+            )
+
     duplicate_rows = int(df.duplicated().sum())
     duplicate_ratio = duplicate_rows / len(df)
     uniqueness_score = QUALITY_SCORE_WEIGHTS["uniqueness"] * (1.0 - duplicate_ratio)
@@ -205,5 +235,6 @@ def assess_data_quality(
             "duplicate_rows": duplicate_rows,
             "missing_required_columns": missing_required,
             "invalid_numeric_values": invalid_numeric_values,
+            "invalid_date_values": invalid_date_values,
         },
     }

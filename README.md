@@ -26,6 +26,8 @@ The analytical layer is deliberately deterministic and independently testable. A
 
 La aplicación incluye una muestra sintética reproducible de 1.500 operaciones, por lo que puede evaluarse sin preparar un archivo propio.
 
+**Demo pública:** https://opsreport-victortapiavm.streamlit.app/
+
 ![OpsReport data quality and KPI dashboard](docs/screenshots/dashboard-overview.png)
 
 ![OpsReport anomaly findings and executive summary](docs/screenshots/dashboard-insights.png)
@@ -275,7 +277,7 @@ El roadmap detallado se mantiene en [`docs/ROADMAP.md`](docs/ROADMAP.md).
 Estado actual:
 
 - **Phase 1 — Strong MVP:** completada.
-- **Phase 2 — Portfolio Polish and Deployment:** en progreso; repositorio público, screenshots y CI Python 3.12 completados; demo pública pendiente.
+- **Phase 2 — Portfolio Polish and Deployment:** completada; repositorio público, screenshots, CI Python 3.12 y demo Streamlit verificada.
 - **Phase 3 — Arbitrary Spreadsheet Support:** completada.
 - **Phase 4 — Reporting and Analytical Depth:** planificada.
 - **Phase 5 — Optional AI Interpretation Layer:** planificada y opcional.

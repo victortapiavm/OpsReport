@@ -57,7 +57,7 @@ This validation baseline should be preserved in later phases.
 
 ## Phase 2 — Portfolio Polish and Deployment
 
-**Status: IN PROGRESS — GitHub publication and CI complete; public Streamlit deployment pending**
+**Status: COMPLETE**
 
 ### Objective
 
@@ -88,6 +88,25 @@ Phase 2 is complete when:
 - the application is available through a public demo URL;
 - the public demo can analyze the bundled sample successfully;
 - the repository and demo links are suitable for a professional profile.
+
+### Delivered
+
+- Published the repository at `https://github.com/victortapiavm/OpsReport`.
+- Added repository description and portfolio-oriented topics.
+- Added real application screenshots to the README.
+- Added GitHub Actions validation on Python 3.12.
+- Deployed the public application at `https://opsreport-victortapiavm.streamlit.app/` using Python 3.12.
+- Verified the deployed bundled sample end to end: the 1,500-row sample loads, all 9 semantic roles map automatically, KPIs render, interactive charts render, anomaly findings and executive narrative are produced, and no application exception is shown.
+- Verified the deployed Excel export by downloading it from the public app; the response returned HTTP 200 with the XLSX MIME type.
+- Added the public demo URL to the README and GitHub repository metadata.
+
+### Validation at completion
+
+- Public Streamlit application loaded successfully and reported a connected session.
+- `sample_operations.csv` was analyzed in the deployed application.
+- The deployed sample reported 1,490 unique orders, 10 duplicate rows, and rendered the expected analytical sections.
+- Excel export returned a valid XLSX response of approximately 100 KB from the deployed application.
+- GitHub Actions had already passed the current analytical implementation on Python 3.12 before deployment.
 
 ### Scope guardrail
 

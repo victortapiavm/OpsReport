@@ -24,6 +24,7 @@ SEMANTIC_FIELDS = (
     "quantity",
     "status",
     "region",
+    "channel",
     "category",
     "processing_time_hours",
 )
@@ -36,6 +37,7 @@ FIELD_LABELS: dict[str, str] = {
     "quantity": "Unidades",
     "status": "Estado",
     "region": "Región",
+    "channel": "Canal",
     "category": "Categoría",
     "processing_time_hours": "Tiempo de procesamiento (h)",
 }
@@ -134,6 +136,16 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
         "area",
         "área",
     ),
+    "channel": (
+        "channel",
+        "sales_channel",
+        "sales channel",
+        "canal",
+        "canal_venta",
+        "canal venta",
+        "origen",
+        "source_channel",
+    ),
     "category": (
         "category",
         "categoria",
@@ -185,7 +197,7 @@ COLUMN_ALIASES: dict[str, tuple[str, ...]] = {
 
 NUMERIC_FIELDS = {"revenue", "cost", "quantity", "processing_time_hours"}
 DATE_FIELDS = {"date", "created_at", "completed_at"}
-CATEGORICAL_FIELDS = {"status", "region", "category"}
+CATEGORICAL_FIELDS = {"status", "region", "channel", "category"}
 CANCELLED_STATUSES = {
     "cancelado",
     "cancelada",

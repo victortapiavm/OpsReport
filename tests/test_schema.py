@@ -29,6 +29,7 @@ def test_infers_common_english_headers_with_high_confidence() -> None:
             "Units Sold": [1, 2],
             "Order Status": ["Completed", "Cancelled"],
             "Market Region": ["North", "South"],
+            "Sales Channel": ["Online", "Store"],
             "Product Family": ["Tools", "Parts"],
             "Processing Hours": [2.0, 3.5],
         }
@@ -40,6 +41,7 @@ def test_infers_common_english_headers_with_high_confidence() -> None:
     assert set(mapping) == set(SEMANTIC_FIELDS)
     assert mapping["order_id"] == "Order Number"
     assert mapping["revenue"] == "Net Sales"
+    assert mapping["channel"] == "Sales Channel"
     assert mapping["processing_time_hours"] == "Processing Hours"
     assert all(item.confidence == "high" for item in inferences.values())
 
@@ -54,6 +56,7 @@ def test_infers_spanish_headers_accent_and_separator_insensitive() -> None:
             "Unidades": [1, 2],
             "Estado Pedido": ["Completado", "Cancelado"],
             "Zona": ["Centro", "Sur"],
+            "Canal Venta": ["Web", "Tienda"],
             "Categoría Producto": ["Herramientas", "Repuestos"],
             "Horas Proceso": [2.0, 3.5],
         }
@@ -69,6 +72,7 @@ def test_infers_spanish_headers_accent_and_separator_insensitive() -> None:
         "quantity": "Unidades",
         "status": "Estado Pedido",
         "region": "Zona",
+        "channel": "Canal Venta",
         "category": "Categoría Producto",
         "processing_time_hours": "Horas Proceso",
     }

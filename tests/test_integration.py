@@ -3,6 +3,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
+from src.analysis import build_operational_analysis
 from src.anomalies import detect_anomalies
 from src.exports import build_excel_export
 from src.ingestion import load_data
@@ -36,6 +37,7 @@ def test_bundled_sample_runs_end_to_end() -> None:
     quality = assess_data_quality(dataframe)
     metrics = calculate_kpis(dataframe)
     anomalies = detect_anomalies(dataframe)
+    analysis = build_operational_analysis(dataframe)
     narrative = generate_management_narrative(
         dataframe,
         profile=profile,
@@ -59,8 +61,24 @@ def test_bundled_sample_runs_end_to_end() -> None:
         metrics=metrics,
         anomalies=anomalies,
         context={"source_file": SAMPLE_PATH.name},
+        analysis=analysis,
     )
     workbook = load_workbook(BytesIO(workbook_bytes), read_only=True)
-    assert {"Resumen", "Datos", "Calidad", "Métricas", "Anomalías", "Contexto"}.issubset(
-        workbook.sheetnames
-    )
+    assert {
+        "Resumen",
+        "Datos",
+        "Calidad",
+        "Métricas",
+        "Anomalías",
+        "Contexto",
+        "Comparación",
+        "Períodos",
+        "Configuración",
+        "Segmentos",
+        "Cambios segmento",
+        "SLA",
+        "Tendencias",
+    }.issubset(workbook.sheetnames)
+    comparison = workbook["Comparación"]
+    assert comparison["A2"].value == "revenue"
+    assert comparison["B2"].value == "Ingresos"

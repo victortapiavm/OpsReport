@@ -8,6 +8,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from src.analysis import AnalysisConfig, build_operational_analysis
 from src.anomalies import detect_anomalies
 from src.exports import build_excel_export
 from src.ingestion import load_data
@@ -346,11 +347,14 @@ def _render_schema_mapping(
     signature = f"{filename or 'dataset'}|{'|'.join(str(column) for column in df.columns)}"
     mapping_store = st.session_state.setdefault("schema_mappings", {})
     saved = mapping_store.get(signature)
-    active = (
-        dict(saved)
-        if isinstance(saved, dict)
-        else {field: automatic.get(field) for field in SEMANTIC_FIELDS}
-    )
+    active = {
+        field: (
+            saved.get(field)
+            if isinstance(saved, dict) and field in saved
+            else automatic.get(field)
+        )
+        for field in SEMANTIC_FIELDS
+    }
 
     high_count = sum(inference.confidence == "high" for inference in inferences.values())
     needs_review = any(inference.confidence != "high" for inference in inferences.values())
@@ -395,8 +399,8 @@ def _render_schema_mapping(
             options = ["— No mapear —", *source_columns]
             for index, field in enumerate(SEMANTIC_FIELDS):
                 inference = inferences[field]
-                if saved is not None:
-                    default_column = saved.get(field)
+                if isinstance(saved, dict):
+                    default_column = active.get(field)
                 elif inference.confidence in {"high", "medium"} and inference.column:
                     default_column = inference.column
                 else:
@@ -557,6 +561,255 @@ def _render_kpis(kpis: dict[str, Any]) -> None:
         second[index].metric(label, value)
 
 
+def _analysis_config_controls() -> AnalysisConfig:
+    with st.expander("Configurar análisis comparativo", expanded=False):
+        st.caption(
+            "Estos umbrales afectan solo diagnósticos determinísticos; no modifican los datos de origen."
+        )
+        c1, c2, c3 = st.columns(3)
+        sla_hours = c1.number_input(
+            "SLA de procesamiento (h)",
+            min_value=1.0,
+            max_value=720.0,
+            value=24.0,
+            step=1.0,
+        )
+        cancellation_alert = c2.number_input(
+            "Umbral de cancelación alta (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=10.0,
+            step=1.0,
+        )
+        trend_deviation = c3.number_input(
+            "Desviación mínima de tendencia (%)",
+            min_value=1.0,
+            max_value=500.0,
+            value=50.0,
+            step=5.0,
+        )
+    return AnalysisConfig(
+        sla_hours=float(sla_hours),
+        cancellation_alert_rate=float(cancellation_alert),
+        trend_deviation_pct=float(trend_deviation),
+    )
+
+
+def _format_analysis_value(value: Any, unit: str) -> str:
+    if value is None or pd.isna(value):
+        return "—"
+    if unit == "currency":
+        return _format_currency(value)
+    if unit == "percent":
+        return _format_percent(value)
+    if unit == "hours":
+        return f"{_format_number(value, 1)} h"
+    return _format_number(value, 1 if unit == "count" and not float(value).is_integer() else 0)
+
+
+def _render_advanced_analysis(analysis: dict[str, Any]) -> None:
+    period = analysis.get("period", {})
+    period_metrics = analysis.get("period_metrics")
+    if not period.get("available") or not isinstance(period_metrics, pd.DataFrame) or period_metrics.empty:
+        st.info(period.get("reason") or "No hay dos períodos comparables disponibles.")
+    else:
+        st.markdown("**Comparación período contra período**")
+        st.caption(str(period.get("note", "")))
+        st.caption(
+            f"Actual: {period.get('current_label')} · Anterior: {period.get('previous_label')}"
+        )
+        rows: list[dict[str, Any]] = []
+        for _, row in period_metrics.iterrows():
+            unit = str(row["unit"])
+            absolute = row["absolute_change"]
+            if pd.isna(absolute):
+                absolute_text = "—"
+            elif unit == "percent":
+                absolute_text = f"{float(absolute):+.1f} pp".replace(".", ",")
+            else:
+                absolute_text = _format_analysis_value(float(absolute), unit)
+                if float(absolute) > 0:
+                    absolute_text = "+" + absolute_text
+            relative = row["relative_change_pct"]
+            relative_text = (
+                f"{float(relative):+.1f}%".replace(".", ",")
+                if not pd.isna(relative)
+                else "—"
+            )
+            rows.append(
+                {
+                    "Indicador": row["label"],
+                    "Actual": _format_analysis_value(row["current"], unit),
+                    "Anterior": _format_analysis_value(row["previous"], unit),
+                    "Cambio absoluto": absolute_text,
+                    "Cambio relativo": relative_text,
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+
+    sla = analysis.get("sla", {})
+    st.markdown("**Cumplimiento de SLA de procesamiento**")
+    if isinstance(sla, dict) and sla.get("available"):
+        sla_cols = st.columns(4)
+        sla_cols[0].metric("SLA configurado", f"{_format_number(sla['threshold_hours'], 1)} h")
+        sla_cols[1].metric("Incumplimientos", _format_number(sla["breach_count"]))
+        sla_cols[2].metric("Tasa de incumplimiento", _format_percent(sla["breach_rate"]))
+        sla_cols[3].metric("P95 procesamiento", f"{_format_number(sla['p95_hours'], 1)} h")
+    else:
+        st.info((sla or {}).get("reason", "No hay tiempos de procesamiento para evaluar SLA."))
+
+    segment_summary = analysis.get("segment_summary")
+    if isinstance(segment_summary, pd.DataFrame) and not segment_summary.empty:
+        st.markdown("**Diagnóstico por segmento**")
+        labels = list(dict.fromkeys(segment_summary["segment_label"].astype(str).tolist()))
+        selected_label = st.selectbox("Dimensión de segmento", labels, key="phase4_segment_dimension")
+        selected = segment_summary.loc[segment_summary["segment_label"].eq(selected_label)].copy()
+        display = selected[
+            [
+                "segment",
+                "orders",
+                "revenue",
+                "gross_margin",
+                "gross_margin_rate",
+                "cancellation_rate",
+                "average_processing_time_hours",
+                "sla_breach_rate",
+                "eligible_for_highlight",
+            ]
+        ].rename(
+            columns={
+                "segment": selected_label,
+                "orders": "Pedidos",
+                "revenue": "Ingresos",
+                "gross_margin": "Margen bruto",
+                "gross_margin_rate": "Margen (%)",
+                "cancellation_rate": "Cancelación (%)",
+                "average_processing_time_hours": "Proceso prom. (h)",
+                "sla_breach_rate": "Incumple SLA (%)",
+                "eligible_for_highlight": "Base suficiente",
+            }
+        )
+        st.dataframe(display, width="stretch", hide_index=True)
+
+        highlightable = selected.loc[selected["eligible_for_highlight"].fillna(False)]
+        reference_bits: list[str] = []
+        valid_cancel = highlightable.dropna(subset=["cancellation_rate"])
+        if not valid_cancel.empty:
+            row = valid_cancel.loc[valid_cancel["cancellation_rate"].idxmax()]
+            reference_bits.append(
+                f"mayor cancelación: {row['segment']} ({_format_percent(row['cancellation_rate'])})"
+            )
+        valid_processing = highlightable.dropna(subset=["average_processing_time_hours"])
+        if not valid_processing.empty:
+            row = valid_processing.loc[valid_processing["average_processing_time_hours"].idxmax()]
+            reference_bits.append(
+                f"mayor tiempo medio: {row['segment']} "
+                f"({_format_number(row['average_processing_time_hours'], 1)} h)"
+            )
+        valid_margin = highlightable.dropna(subset=["gross_margin"])
+        if not valid_margin.empty:
+            row = valid_margin.loc[valid_margin["gross_margin"].idxmax()]
+            reference_bits.append(
+                f"mayor margen bruto: {row['segment']} ({_format_currency(row['gross_margin'])})"
+            )
+        if reference_bits:
+            st.caption("Referencias del segmento · " + " · ".join(reference_bits))
+
+        threshold = analysis.get("config", {}).get("cancellation_alert_rate")
+        flagged_cancel = highlightable.loc[highlightable["high_cancellation"].fillna(False)]
+        if threshold is not None and not flagged_cancel.empty:
+            names = ", ".join(flagged_cancel["segment"].astype(str).tolist())
+            st.warning(
+                f"Cancelación igual o superior al umbral configurado ({_format_percent(threshold)}): {names}."
+            )
+
+        comparison = analysis.get("segment_comparison")
+        if isinstance(comparison, pd.DataFrame) and not comparison.empty:
+            changes = comparison.loc[comparison["segment_label"].eq(selected_label)].copy()
+            if not changes.empty:
+                st.caption("Cambios del período actual frente al período anterior comparable.")
+                st.dataframe(
+                    changes[
+                        [
+                            "segment",
+                            "eligible_for_highlight",
+                            "revenue_change_pct",
+                            "margin_change_pct",
+                            "cancellation_change_pp",
+                            "processing_change_pct",
+                            "sla_breach_change_pp",
+                        ]
+                    ].rename(
+                        columns={
+                            "segment": selected_label,
+                            "eligible_for_highlight": "Base suficiente",
+                            "revenue_change_pct": "Ingresos Δ (%)",
+                            "margin_change_pct": "Margen Δ (%)",
+                            "cancellation_change_pp": "Cancelación Δ (pp)",
+                            "processing_change_pct": "Proceso Δ (%)",
+                            "sla_breach_change_pp": "Incumple SLA Δ (pp)",
+                        }
+                    ),
+                    width="stretch",
+                    hide_index=True,
+                )
+                eligible_changes = changes.loc[changes["eligible_for_highlight"].fillna(False)]
+                deterioration: list[str] = []
+                cancel_up = eligible_changes.dropna(subset=["cancellation_change_pp"])
+                cancel_up = cancel_up.loc[cancel_up["cancellation_change_pp"].gt(0)]
+                if not cancel_up.empty:
+                    row = cancel_up.loc[cancel_up["cancellation_change_pp"].idxmax()]
+                    deterioration.append(
+                        f"mayor aumento de cancelación: {row['segment']} "
+                        f"({float(row['cancellation_change_pp']):+.1f} pp)"
+                    )
+                processing_up = eligible_changes.dropna(subset=["processing_change_pct"])
+                processing_up = processing_up.loc[processing_up["processing_change_pct"].gt(0)]
+                if not processing_up.empty:
+                    row = processing_up.loc[processing_up["processing_change_pct"].idxmax()]
+                    deterioration.append(
+                        f"mayor aumento de procesamiento: {row['segment']} "
+                        f"({float(row['processing_change_pct']):+.1f}%)"
+                    )
+                revenue_down = eligible_changes.dropna(subset=["revenue_change_pct"])
+                revenue_down = revenue_down.loc[revenue_down["revenue_change_pct"].lt(0)]
+                if not revenue_down.empty:
+                    row = revenue_down.loc[revenue_down["revenue_change_pct"].idxmin()]
+                    deterioration.append(
+                        f"mayor caída de ingresos: {row['segment']} "
+                        f"({float(row['revenue_change_pct']):+.1f}%)"
+                    )
+                if deterioration:
+                    st.caption("Señales de deterioro · " + " · ".join(deterioration))
+
+
+def _render_trend_anomalies(analysis: dict[str, Any]) -> None:
+    trends = analysis.get("trend_anomalies")
+    if not isinstance(trends, pd.DataFrame) or trends.empty:
+        st.success("No se detectaron desviaciones relevantes contra la línea base histórica reciente.")
+        return
+    st.warning(
+        f"Se detectaron {len(trends)} días con ingresos alejados de su línea base histórica reciente."
+    )
+    display = trends.copy()
+    display["date"] = pd.to_datetime(display["date"]).dt.strftime("%d-%m-%Y")
+    display = display.rename(
+        columns={
+            "date": "Fecha",
+            "value": "Ingresos",
+            "baseline": "Línea base",
+            "deviation_pct": "Desviación (%)",
+            "direction": "Dirección",
+            "method": "Método",
+        }
+    )
+    st.dataframe(
+        display[["Fecha", "Ingresos", "Línea base", "Desviación (%)", "Dirección", "Método"]],
+        width="stretch",
+        hide_index=True,
+    )
+
+
 def _render_anomalies(findings: list[Any]) -> None:
     if not findings:
         st.success("No se detectaron anomalías relevantes con las reglas actuales.")
@@ -666,12 +919,18 @@ def main() -> None:
     )
     column_map, _ = _render_schema_mapping(df, filename)
     st.divider()
+    analysis_config = _analysis_config_controls()
 
     try:
         profile = profile_dataframe(df)
         quality = assess_data_quality(df, column_map=column_map)
         kpis = calculate_kpis(df, column_map=column_map)
         findings = detect_anomalies(df, column_map=column_map)
+        advanced_analysis = build_operational_analysis(
+            df,
+            column_map=column_map,
+            config=analysis_config,
+        )
         summary = generate_management_narrative(
             df,
             profile=profile,
@@ -716,7 +975,13 @@ def main() -> None:
             "las columnas necesarias o no tiene valores interpretables."
         )
 
-    st.header("4. Visualizaciones")
+    st.header("4. Comparación y diagnóstico por segmento")
+    st.caption(
+        "Cambios frente al período anterior, desempeño por segmento y cumplimiento del SLA configurado."
+    )
+    _render_advanced_analysis(advanced_analysis)
+
+    st.header("5. Visualizaciones")
     st.caption("Vistas interactivas construidas directamente desde el archivo analizado.")
     charts = _charts(df, column_map)
     if not charts:
@@ -745,11 +1010,14 @@ def main() -> None:
                     st.subheader(title)
                     st.plotly_chart(fig, width="stretch")
 
-    st.header("5. Anomalías y señales para investigar")
-    st.caption("Outliers estadísticos simples y reproducibles sobre variables operativas.")
+    st.header("6. Anomalías y señales para investigar")
+    st.caption("Outliers por registro y desviaciones contra una línea base histórica reproducible.")
+    st.markdown("**Observaciones atípicas por registro**")
     _render_anomalies(findings)
+    st.markdown("**Desviaciones de tendencia diaria**")
+    _render_trend_anomalies(advanced_analysis)
 
-    st.header("6. Resumen ejecutivo")
+    st.header("7. Resumen ejecutivo")
     st.caption("Narrativa determinística construida a partir de métricas y hallazgos calculados.")
     if isinstance(summary, (list, tuple)):
         summary_text = " ".join(str(item) for item in summary)
@@ -758,7 +1026,7 @@ def main() -> None:
     safe_summary = escape(summary_text).replace("\n\n", "<br><br>").replace("\n", "<br>")
     st.markdown(f'<div class="ops-summary">{safe_summary}</div>', unsafe_allow_html=True)
 
-    st.header("7. Exportar análisis")
+    st.header("8. Exportar análisis")
     st.caption("Descarga un libro Excel con contexto, métricas, diagnósticos y datos analizados.")
     try:
         workbook = build_excel_export(
@@ -768,6 +1036,9 @@ def main() -> None:
             anomalies=findings,
             context={
                 "source_file": filename,
+                "sla_hours": analysis_config.sla_hours,
+                "cancellation_alert_rate": analysis_config.cancellation_alert_rate,
+                "trend_deviation_pct": analysis_config.trend_deviation_pct,
                 "column_mapping": {
                     FIELD_LABELS[field]: column
                     for field, column in column_map.items()
@@ -775,6 +1046,7 @@ def main() -> None:
                 },
             },
             column_map=column_map,
+            analysis=advanced_analysis,
         )
         st.download_button(
             "Descargar informe Excel",
@@ -784,8 +1056,8 @@ def main() -> None:
             type="primary",
         )
         st.markdown(
-            '<div class="ops-note">El archivo incluye contexto, indicadores, diagnósticos y '
-            "los datos analizados.</div>",
+            '<div class="ops-note">El archivo incluye contexto, indicadores, comparaciones, '
+            "diagnósticos por segmento, SLA, tendencias y los datos analizados.</div>",
             unsafe_allow_html=True,
         )
     except Exception as exc:

@@ -60,15 +60,18 @@ La frase que guía el producto es:
 - Reconocimiento semántico explicable de columnas comunes en español e inglés.
 - Mapeo interactivo para planillas con nombres de columnas distintos o ambiguos.
 - Mapeos parciales: los indicadores sin campos suficientes quedan explícitamente no disponibles.
+- Comparación automática contra el período anterior con cambios absolutos y porcentuales, incluyendo manejo explícito de períodos parciales.
+- Diagnóstico por región, categoría, canal y estado con ingresos, margen, cancelación, procesamiento y SLA.
+- Umbrales configurables para SLA de procesamiento, cancelación alta y sensibilidad de anomalías temporales.
 - Vista general con tamaño del dataset, período detectado y vista previa.
 - Diagnóstico de valores faltantes y filas duplicadas.
 - Inferencia práctica de tipos de columnas y detección de inconsistencias donde aplica.
 - Indicador de calidad de datos entre 0 y 100.
 - KPIs operativos calculados fuera de la capa UI.
 - Visualizaciones interactivas con Plotly.
-- Detección determinística de outliers y desviaciones operativas.
+- Detección determinística de outliers por registro y desviaciones temporales contra una línea base histórica móvil.
 - Resumen ejecutivo en español basado únicamente en hechos calculados.
-- Exportación a Excel con contexto, resultados y datos analizados.
+- Exportación a Excel con contexto, resultados, comparaciones, segmentos, SLA, tendencias y datos analizados.
 - Manejo de esquemas incompletos sin romper la aplicación.
 
 ## Dataset de ejemplo
@@ -101,10 +104,13 @@ flowchart LR
     S --> C[Validation & Profiling]
     C --> D[KPIs]
     C --> E[Anomaly Detection]
+    D --> I[Comparative & Segment Analysis]
+    E --> I
     D --> F[Deterministic Narrative]
     E --> F
     D --> G[Streamlit Dashboard]
     E --> G
+    I --> G
     F --> G
     G --> H[Excel Export]
 ```
@@ -115,6 +121,7 @@ OpsReport/
 ├── src/
 │   ├── ingestion.py
 │   ├── schema.py
+│   ├── analysis.py
 │   ├── validation.py
 │   ├── profiling.py
 │   ├── metrics.py
@@ -143,6 +150,7 @@ La separación es intencional:
 
 - `ingestion.py`: lectura y errores de archivos;
 - `schema.py`: reconocimiento explicable y resolución de roles semánticos;
+- `analysis.py`: comparación temporal, diagnóstico por segmentos, SLA y baseline histórico;
 - `validation.py`: calidad de datos y advertencias;
 - `profiling.py`: resumen estructural e inferencia de tipos;
 - `metrics.py`: KPIs;
@@ -187,6 +195,8 @@ El margen bruto se calcula a partir de ingresos y costos. Si un archivo no conti
 ## Anomalías
 
 La detección de anomalías usa reglas transparentes y reproducibles, como IQR y comparaciones contra baselines agregados. No se usa machine learning para etiquetar desviaciones simples.
+
+Phase 4 agrega una segunda capa temporal: los ingresos diarios se comparan contra una mediana móvil calculada exclusivamente con observaciones anteriores y se exige además una desviación robusta basada en MAD. El umbral porcentual mínimo se puede ajustar desde la interfaz.
 
 Los hallazgos describen lo que muestran los datos, por ejemplo un tiempo de procesamiento muy superior al rango habitual o una tasa de cancelación elevada en un segmento. OpsReport no atribuye causas.
 
@@ -265,7 +275,7 @@ Un archivo arbitrario puede no usar `revenue`, `cost`, `status` u otros nombres 
 - El reconocimiento semántico usa aliases y heurísticas de tipo transparentes; encabezados muy específicos del negocio pueden requerir mapeo manual.
 - Los mapeos confirmados viven en la sesión actual y no se guardan como presets reutilizables.
 - La inferencia de tipos es heurística.
-- Las anomalías son reglas estadísticas simples y no modelan estacionalidad compleja.
+- Las anomalías siguen siendo reglas estadísticas transparentes; la línea base móvil no modela estacionalidad compleja ni realiza forecasting.
 - El export principal es Excel.
 - PDF queda fuera del MVP para evitar una dependencia de generación frágil o pesada.
 - No existe persistencia entre sesiones.
@@ -279,7 +289,7 @@ Estado actual:
 - **Phase 1 — Strong MVP:** completada.
 - **Phase 2 — Portfolio Polish and Deployment:** completada; repositorio público, screenshots, CI Python 3.12 y demo Streamlit verificada.
 - **Phase 3 — Arbitrary Spreadsheet Support:** completada.
-- **Phase 4 — Reporting and Analytical Depth:** planificada.
+- **Phase 4 — Reporting and Analytical Depth:** completada; comparación temporal, segmentos, SLA, umbrales configurables, anomalías históricas y export extendido.
 - **Phase 5 — Optional AI Interpretation Layer:** planificada y opcional.
 
 ## Estado del proyecto

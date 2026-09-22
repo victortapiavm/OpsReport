@@ -166,7 +166,7 @@ Column recognition should remain explainable. Avoid introducing a mandatory LLM 
 
 ## Phase 4 — Reporting and Analytical Depth
 
-**Status: PLANNED**
+**Status: COMPLETE**
 
 ### Objective
 
@@ -184,6 +184,31 @@ Increase the usefulness of the report for an operations analyst or junior manage
 - Configurable deterministic thresholds.
 - Additional export tables reflecting the new analysis.
 - Optional lightweight PDF export if it can be implemented reliably and portably.
+
+### Delivered
+
+- Deterministic period-over-period comparison with current value, previous value, absolute change, and relative percentage change for revenue, orders, units, gross margin, margin rate, cancellation rate, and average processing time.
+- Automatic comparison grain for practical short and long uploads: day for very short spans, week for intermediate spans, and month for longer histories.
+- Explicit partial-period handling: incomplete weeks/months compare against the same elapsed slice of the preceding period instead of a full prior period.
+- Segment diagnostics across region, category, channel, and status, including revenue, gross margin, margin rate, processing time, and configurable SLA breach rate.
+- Segment period-over-period deltas for revenue, margin, cancellation, processing time, and SLA breaches, with separate deterioration signals instead of an arbitrary composite score.
+- Channel added as a first-class explainable semantic mapping role.
+- Configurable deterministic thresholds for processing SLA, high cancellation rate, and time-series deviation sensitivity.
+- SLA diagnostics with breach count/rate and p95 processing time; values equal to the SLA remain compliant and negative/invalid processing values are excluded.
+- Historical time-series anomaly detection for daily revenue using only prior observations, a rolling median baseline, rolling MAD, and a configurable minimum percentage deviation.
+- Additional Excel sheets for period comparison, segment diagnostics, segment changes, SLA, and time-series findings.
+- Streamlit UI for comparison tables, segment selection, deterioration signals, SLA metrics, threshold warnings, and historical trend findings.
+- Backward-compatible handling for partial schemas and saved mappings created before the channel role existed.
+
+### Validation at completion
+
+- Focused Phase 4 tests cover incomplete-period alignment, zero baselines, segment calculations, status-diagnostic suppression, SLA boundary behavior, historical-only rolling anomalies, configuration validation, export sheets, and the Streamlit sample workflow.
+- The bundled sample still runs through the complete dashboard/export path with all supported semantic roles inferred automatically.
+- Existing Phase 1–3 regression coverage remains green.
+
+### Deliberate deferral
+
+PDF export remains deferred. It was explicitly optional, the existing portable XLSX export now contains all Phase 4 analytical tables, and adding a PDF stack would increase deployment weight and portability risk without improving the core spreadsheet-to-report workflow enough to justify it.
 
 ### Definition of Done
 
@@ -305,6 +330,6 @@ Any later feature should earn its complexity by improving the core spreadsheet-t
 
 ## Current Next Step
 
-Finish the remaining **Phase 2 — Portfolio Polish and Deployment** item: complete Streamlit Community Cloud authorization/deployment, verify the bundled sample and Excel export on the public instance, then add the live-demo URL to GitHub and this README.
+**Phase 4 — Reporting and Analytical Depth** is complete.
 
-After that, **Phase 4 — Reporting and Analytical Depth** is the next product-development phase unless implementation evidence suggests a better intermediate step.
+The next planned product phase is **Phase 5 — Optional AI Interpretation Layer**. It remains optional: OpsReport is already complete as a deterministic portfolio application, and any AI work should preserve the current analytical engine as the numerical source of truth.

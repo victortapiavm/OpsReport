@@ -23,6 +23,7 @@ def build_excel_export(
     anomalies: pd.DataFrame | list[Mapping[str, Any]] | None = None,
     context: Mapping[str, Any] | None = None,
     column_map: Mapping[str, str | None] | None = None,
+    analysis: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Build a styled XLSX with raw data, context and analysis tables."""
     resolved_profile = dict(profile or profile_dataframe(dataframe))
@@ -49,6 +50,8 @@ def build_excel_export(
         anomaly_frame = _coerce_anomalies(anomalies)
         if not anomaly_frame.empty:
             anomaly_frame.to_excel(writer, sheet_name="Anomalías", index=False)
+
+        _write_analysis_tables(writer, analysis or {})
 
         _style_workbook(writer.book)
 
@@ -106,6 +109,35 @@ def _coerce_anomalies(anomalies: pd.DataFrame | list[Mapping[str, Any]] | None) 
     if isinstance(anomalies, pd.DataFrame):
         return anomalies.copy()
     return pd.DataFrame(anomalies)
+
+
+def _write_analysis_tables(writer: Any, analysis: Mapping[str, Any]) -> None:
+    """Write optional Phase 4 analysis tables without changing legacy exports."""
+
+    table_sheets = (
+        ("period_metrics", "Comparación"),
+        ("segment_summary", "Segmentos"),
+        ("segment_comparison", "Cambios segmento"),
+        ("trend_anomalies", "Tendencias"),
+    )
+    for key, sheet_name in table_sheets:
+        value = analysis.get(key)
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            value.to_excel(writer, sheet_name=sheet_name, index=False)
+
+    period = analysis.get("period")
+    if isinstance(period, Mapping) and period:
+        _mapping_table(period, "campo", "valor").to_excel(writer, sheet_name="Períodos", index=False)
+
+    config = analysis.get("config")
+    if isinstance(config, Mapping) and config:
+        _mapping_table(config, "parámetro", "valor").to_excel(
+            writer, sheet_name="Configuración", index=False
+        )
+
+    sla = analysis.get("sla")
+    if isinstance(sla, Mapping) and sla:
+        _mapping_table(sla, "indicador", "valor").to_excel(writer, sheet_name="SLA", index=False)
 
 
 def _excel_safe(value: Any) -> Any:

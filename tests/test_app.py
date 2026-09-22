@@ -6,6 +6,19 @@ from streamlit.testing.v1 import AppTest
 APP_PATH = Path(__file__).parents[1] / "app.py"
 
 
+def test_bundled_sample_renders_phase4_analysis() -> None:
+    app = AppTest.from_file(APP_PATH).run(timeout=20)
+    next(button for button in app.button if button.label == "Probar con datos de ejemplo").click()
+    app.run(timeout=30)
+
+    assert not app.exception
+    metrics = {metric.label: metric.value for metric in app.metric}
+    assert metrics["SLA configurado"] == "24,0 h"
+    assert "Tasa de incumplimiento" in metrics
+    assert any(selectbox.label == "Dimensión de segmento" for selectbox in app.selectbox)
+    assert app.get("download_button")
+
+
 def test_arbitrary_upload_can_be_mapped_through_ui() -> None:
     csv_bytes = (
         "Ref,When,Billings,Spend,Pieces,Lifecycle,Market,Line,Cycle\n"
